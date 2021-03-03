@@ -1,61 +1,204 @@
-# Incremental Build && Fast Serve
+# Demonstration of build problems with Nx >= 11.2
 
-This project has an application composed out 44 libraries (more than 2000 components). If you run `nx dep-graph`, you will see the following:
+This repository is fork of [nx-incremental-large-repo](https://github.com/nrwl/nx-incremental-large-repo).
 
-<p align="center"><img src="https://raw.githubusercontent.com/nrwl/nx-incremental-large-repo/master/dep-graph.png"></p>
+There are two problems after migrating to latest version of Nx. Both are related to build.
 
-> **Note:** this is experimental right now and will be released in Nx v11. [Check out our roadmap.](https://github.com/nrwl/nx/issues/3377)
+## Network access
 
-## Two Applications
+Build is failing due to network access.
 
-There are two applications in the repo: app0 and app1. They are identical. They import the same libraries. The only difference is app1 is built using normal webpack builder, where all the libraries are built from source and app0 is built differently: every library here is built in its own process.
+To demonstrate this issue, just build the project. 
+```
+nx affected:build
+```
 
-## Serving App1
+On Mac OS, the following error is produced many times during build: 
 
-- `nx serve app1` takes about 1 minute (on my machine).
-- Once `nx serve app1` is running, an incremental change of a child lib takes about 9 seconds.
+![node-firewall.png](node-firewall.png) 
 
-## Serving App0
+On Linux, the build is failing with following error:
+```
+ERROR: Timed out waiting for sync-rpc server to start (it should respond with "pong" when sent "ping"):
 
-- `nx serve app0` takes a few seconds.
-- Once `nx serve app0` is running, an incremental change of a child lib takes about 15 seconds.
 
-Why is running `nx serve app0` so fast? Because the results of building most libraries are retrieved from the Nx Cloud cache (or your local cache). If you don't have the cache, rebuilding everything takes about 1 minute. Most of the time, however, you are getting the artifacts from Nx Cloud because your CI or your co-workers already built the version of the repo you are working against.
+events.js:173
 
-Why is making an incremental change takes 15 seconds?
+      throw er; // Unhandled 'error' event
 
-- Every library has 50 components, so it's relatively big. This is intentional because we want to illustrate that the time will be reasonable even without splitting the app into hundreds of libraries.
-- We use ngpackagr to build the library. It generates several bundles we don't actually use. Having a different builder could cut this time in half.
+      ^
 
-Given that, by providing a custom builder, we could cut the incremental change time down to 10 seconds.
+Error: connect ECONNREFUSED 127.0.0.1:37683
 
-### Bigger Apps
+    at TCPConnectWrap.afterConnect [as oncomplete] (net.js:1054:14)
 
-If we double the app size to 4000 components, the following will be the case:
+Emitted 'error' event at:
 
-- `nx serve app1` will take about 2 minutes.
-- Once `nx serve app1` is running, an incremental change will take about 15 seconds.
-- `nx serve app0` will still take a few seconds.
-- Once `nx serve app0` is running, an incremental change will take about 20 seconds.
+    at emitErrorNT (internal/streams/destroy.js:91:8)
 
-So `app0` scales a lot better as the codebase grows. **The initial `nx serve` will only take a few seconds regardless of the size of the app.** In this repo's example, the incremental change of `app0` is somewhat slower, but the difference is getting less substantial as the app grows. And by using a builder that simply invokes ngc instead of ngpackgr, it's possible to make the incremental change of `app0` faster than app1 for any large app.
+    at emitErrorAndCloseNT (internal/streams/destroy.js:59:3)
 
-## Testing and Linting
+    at processTicksAndRejections (internal/process/task_queues.js:84:9)
 
-- Run `nx test app0 --with-deps` to run all the tests.
-- Run `nx lint app0 --with-deps` to run all the lint checks.
+```
 
-## How does it work?
+## ngcc conflict
 
-This works, thanks to a combination of existing and newly introduced Nx features:
+Another issue is when you use parallel builds:
 
-- dependency graph used to resolve all dependencies that need to be built
-- task orchestrator that is able to resolve and properly build all dependencies when using `--with-deps`
-- "buildable" libraries, that use a lightweight version of ng-packagr to speed up re-builds
-- computation caching and especially [Nx Cloud](https://nx.app) distributed caching
+```
+ nx run-many --all --target build --parallel --maxParallel 10
+```
 
-Keep an eye on [our Twitter account](https://twitter.com/nxdevtools) and [our blog](https://blog.nrwl.io) for a more in-depth explanation once v11 is released.
+During the build, the ngcc conflicts are occuring:
+```
+(...)
 
-## Try it!
+> nx run app0-lib4-childlib8:build [retrieved from cache]
+Building Angular Package
 
-- Clone the repo and run `nx serve app0`
+------------------------------------------------------------------------------
+Building entry point '@largerepo/app0/lib4/childlib8'
+------------------------------------------------------------------------------
+Bundling to FESM2015
+
+------------------------------------------------------------------------------
+Built Angular Package
+ - from: /(...)/nx-incremental-large-repo/libs/app0/lib4/childlib8
+ - to:   /(...)/nx-incremental-large-repo/dist/libs/app0/lib4/childlib8
+------------------------------------------------------------------------------
+
+> nx run app0-lib4-childlib9:build [retrieved from cache]
+Building Angular Package
+
+------------------------------------------------------------------------------
+Building entry point '@largerepo/app0/lib4/childlib9'
+------------------------------------------------------------------------------
+Bundling to FESM2015
+
+------------------------------------------------------------------------------
+Built Angular Package
+ - from: /(...)/nx-incremental-large-repo/libs/app0/lib4/childlib9
+ - to:   /(...)/nx-incremental-large-repo/dist/libs/app0/lib4/childlib9
+------------------------------------------------------------------------------
+Another process, with id 36306, is currently running ngcc.
+Waiting up to 250s for it to finish.
+(If you are sure no ngcc process is running then you should delete the lock-file at /(...)/nx-incremental-large-repo/node_modules/@angular/compiler-cli/ngcc/__ngcc_lock_file__.)
+Another process, with id 36306, is currently running ngcc.
+Waiting up to 250s for it to finish.
+(If you are sure no ngcc process is running then you should delete the lock-file at /(...)/nx-incremental-large-repo/node_modules/@angular/compiler-cli/ngcc/__ngcc_lock_file__.)
+Another process, with id 36306, is currently running ngcc.
+Waiting up to 250s for it to finish.
+(If you are sure no ngcc process is running then you should delete the lock-file at /(...)/nx-incremental-large-repo/node_modules/@angular/compiler-cli/ngcc/__ngcc_lock_file__.)
+Another process, with id 36306, is currently running ngcc.
+Waiting up to 250s for it to finish.
+(If you are sure no ngcc process is running then you should delete the lock-file at /(...)/nx-incremental-large-repo/node_modules/@angular/compiler-cli/ngcc/__ngcc_lock_file__.)
+Another process, with id 36306, is currently running ngcc.
+Waiting up to 250s for it to finish.
+(If you are sure no ngcc process is running then you should delete the lock-file at /(...)/nx-incremental-large-repo/node_modules/@angular/compiler-cli/ngcc/__ngcc_lock_file__.)
+Another process, with id 36306, is currently running ngcc.
+Waiting up to 250s for it to finish.
+(If you are sure no ngcc process is running then you should delete the lock-file at /(...)/nx-incremental-large-repo/node_modules/@angular/compiler-cli/ngcc/__ngcc_lock_file__.)
+Another process, with id 36306, is currently running ngcc.
+Waiting up to 250s for it to finish.
+(If you are sure no ngcc process is running then you should delete the lock-file at /(...)/nx-incremental-large-repo/node_modules/@angular/compiler-cli/ngcc/__ngcc_lock_file__.)
+Another process, with id 36306, is currently running ngcc.
+Waiting up to 250s for it to finish.
+(If you are sure no ngcc process is running then you should delete the lock-file at /(...)/nx-incremental-large-repo/node_modules/@angular/compiler-cli/ngcc/__ngcc_lock_file__.)
+Another process, with id 36310, is currently running ngcc.
+Waiting up to 250s for it to finish.
+(If you are sure no ngcc process is running then you should delete the lock-file at /(...)/nx-incremental-large-repo/node_modules/@angular/compiler-cli/ngcc/__ngcc_lock_file__.)
+Another process, with id 36310, is currently running ngcc.
+Waiting up to 250s for it to finish.
+(If you are sure no ngcc process is running then you should delete the lock-file at /(...)/nx-incremental-large-repo/node_modules/@angular/compiler-cli/ngcc/__ngcc_lock_file__.)
+Another process, with id 36310, is currently running ngcc.
+Waiting up to 250s for it to finish.
+(If you are sure no ngcc process is running then you should delete the lock-file at /(...)/nx-incremental-large-repo/node_modules/@angular/compiler-cli/ngcc/__ngcc_lock_file__.)
+Another process, with id 36310, is currently running ngcc.
+Waiting up to 250s for it to finish.
+(If you are sure no ngcc process is running then you should delete the lock-file at /(...)/nx-incremental-large-repo/node_modules/@angular/compiler-cli/ngcc/__ngcc_lock_file__.)
+Browserslist: caniuse-lite is outdated. Please run the following command: `yarn upgrade`
+Another process, with id 36310, is currently running ngcc.
+Waiting up to 250s for it to finish.
+(If you are sure no ngcc process is running then you should delete the lock-file at /(...)/nx-incremental-large-repo/node_modules/@angular/compiler-cli/ngcc/__ngcc_lock_file__.)
+Another process, with id 36310, is currently running ngcc.
+Waiting up to 250s for it to finish.
+(If you are sure no ngcc process is running then you should delete the lock-file at /(...)/nx-incremental-large-repo/node_modules/@angular/compiler-cli/ngcc/__ngcc_lock_file__.)
+Another process, with id 36310, is currently running ngcc.
+Waiting up to 250s for it to finish.
+(If you are sure no ngcc process is running then you should delete the lock-file at /(...)/nx-incremental-large-repo/node_modules/@angular/compiler-cli/ngcc/__ngcc_lock_file__.)
+Another process, with id 36313, is currently running ngcc.
+Waiting up to 250s for it to finish.
+(If you are sure no ngcc process is running then you should delete the lock-file at /(...)/nx-incremental-large-repo/node_modules/@angular/compiler-cli/ngcc/__ngcc_lock_file__.)
+Another process, with id 36313, is currently running ngcc.
+Waiting up to 250s for it to finish.
+(If you are sure no ngcc process is running then you should delete the lock-file at /(...)/nx-incremental-large-repo/node_modules/@angular/compiler-cli/ngcc/__ngcc_lock_file__.)
+Another process, with id 36313, is currently running ngcc.
+Waiting up to 250s for it to finish.
+(If you are sure no ngcc process is running then you should delete the lock-file at /(...)/nx-incremental-large-repo/node_modules/@angular/compiler-cli/ngcc/__ngcc_lock_file__.)
+Another process, with id 36313, is currently running ngcc.
+Waiting up to 250s for it to finish.
+(If you are sure no ngcc process is running then you should delete the lock-file at /(...)/nx-incremental-large-repo/node_modules/@angular/compiler-cli/ngcc/__ngcc_lock_file__.)
+Another process, with id 36313, is currently running ngcc.
+Waiting up to 250s for it to finish.
+(If you are sure no ngcc process is running then you should delete the lock-file at /(...)/nx-incremental-large-repo/node_modules/@angular/compiler-cli/ngcc/__ngcc_lock_file__.)
+Another process, with id 36313, is currently running ngcc.
+Waiting up to 250s for it to finish.
+(If you are sure no ngcc process is running then you should delete the lock-file at /(...)/nx-incremental-large-repo/node_modules/@angular/compiler-cli/ngcc/__ngcc_lock_file__.)
+Another process, with id 36309, is currently running ngcc.
+Waiting up to 250s for it to finish.
+(If you are sure no ngcc process is running then you should delete the lock-file at /(...)/nx-incremental-large-repo/node_modules/@angular/compiler-cli/ngcc/__ngcc_lock_file__.)
+Browserslist: caniuse-lite is outdated. Please run the following command: `yarn upgrade`
+Another process, with id 36309, is currently running ngcc.
+Waiting up to 250s for it to finish.
+(If you are sure no ngcc process is running then you should delete the lock-file at /(...)/nx-incremental-large-repo/node_modules/@angular/compiler-cli/ngcc/__ngcc_lock_file__.)
+Another process, with id 36309, is currently running ngcc.
+Waiting up to 250s for it to finish.
+(If you are sure no ngcc process is running then you should delete the lock-file at /(...)/nx-incremental-large-repo/node_modules/@angular/compiler-cli/ngcc/__ngcc_lock_file__.)
+Another process, with id 36309, is currently running ngcc.
+Waiting up to 250s for it to finish.
+(If you are sure no ngcc process is running then you should delete the lock-file at /(...)/nx-incremental-large-repo/node_modules/@angular/compiler-cli/ngcc/__ngcc_lock_file__.)
+Another process, with id 36309, is currently running ngcc.
+Waiting up to 250s for it to finish.
+(If you are sure no ngcc process is running then you should delete the lock-file at /(...)/nx-incremental-large-repo/node_modules/@angular/compiler-cli/ngcc/__ngcc_lock_file__.)
+Another process, with id 36311, is currently running ngcc.
+Waiting up to 250s for it to finish.
+(If you are sure no ngcc process is running then you should delete the lock-file at /(...)/nx-incremental-large-repo/node_modules/@angular/compiler-cli/ngcc/__ngcc_lock_file__.)
+Another process, with id 36311, is currently running ngcc.
+Waiting up to 250s for it to finish.
+(If you are sure no ngcc process is running then you should delete the lock-file at /(...)/nx-incremental-large-repo/node_modules/@angular/compiler-cli/ngcc/__ngcc_lock_file__.)
+Browserslist: caniuse-lite is outdated. Please run the following command: `yarn upgrade`
+
+> nx run app0-lib3-childlib8:build 
+Building Angular Package
+
+------------------------------------------------------------------------------
+Building entry point '@largerepo/app0/lib3/childlib8'
+------------------------------------------------------------------------------
+Bundling to FESM2015
+
+------------------------------------------------------------------------------
+Built Angular Package
+ - from: /(...)/nx-incremental-large-repo/libs/app0/lib3/childlib8
+ - to:   /(...)/nx-incremental-large-repo/dist/libs/app0/lib3/childlib8
+------------------------------------------------------------------------------
+Another process, with id 36311, is currently running ngcc.
+Waiting up to 250s for it to finish.
+(If you are sure no ngcc process is running then you should delete the lock-file at /(...)/nx-incremental-large-repo/node_modules/@angular/compiler-cli/ngcc/__ngcc_lock_file__.)
+Another process, with id 36311, is currently running ngcc.
+Waiting up to 250s for it to finish.
+(If you are sure no ngcc process is running then you should delete the lock-file at /(...)/nx-incremental-large-repo/node_modules/@angular/compiler-cli/ngcc/__ngcc_lock_file__.)
+Another process, with id 36312, is currently running ngcc.
+Waiting up to 250s for it to finish.
+(If you are sure no ngcc process is running then you should delete the lock-file at /(...)/nx-incremental-large-repo/node_modules/@angular/compiler-cli/ngcc/__ngcc_lock_file__.)
+Another process, with id 36312, is currently running ngcc.
+Waiting up to 250s for it to finish.
+(If you are sure no ngcc process is running then you should delete the lock-file at /(...)/nx-incremental-large-repo/node_modules/@angular/compiler-cli/ngcc/__ngcc_lock_file__.)
+Another process, with id 36312, is currently running ngcc.
+Waiting up to 250s for it to finish.
+(If you are sure no ngcc process is running then you should delete the lock-file at /(...)/nx-incremental-large-repo/node_modules/@angular/compiler-cli/ngcc/__ngcc_lock_file__.)
+Browserslist: caniuse-lite is outdated. Please run the following command: `yarn upgrade`
+
+(...)
+
+```
